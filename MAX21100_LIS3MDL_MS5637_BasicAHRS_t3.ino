@@ -34,8 +34,8 @@
  Hardware setup:
  Breakout Board --------- Arduino/Teensy
  3V3 ---------------------- 3.3V
- SDA ----------------------- A4/17
- SCL ----------------------- A5/16
+ SDA -----------------------A4/17
+ SCL -----------------------A5/16
  GND ---------------------- GND
  
  Note: The MAX21100_LIS3MDL_MS5637 breakout board is an I2C sensor and uses the Arduino Wire or Teensy i2c_t3.h library. 
@@ -636,9 +636,9 @@ void loop()
    if( (status & 0x01) && !(status & 0x02) ) {  // check if gyro data ready  and no gyro data error
     readGyroData(gyroCount);  // Read the x/y/z adc values
     // Calculate the gyro value into actual degrees per second
-    gx = (float)gyroCount[0]*gRes - gyroBias[0];  // get actual gyro value, this depends on scale being set
-    gy = (float)gyroCount[1]*gRes - gyroBias[1];  
-    gz = (float)gyroCount[2]*gRes - gyroBias[2]; 
+    gx = (float)gyroCount[0]*gRes; // - gyroBias[0];  // get actual gyro value, this depends on scale being set
+    gy = (float)gyroCount[1]*gRes; // - gyroBias[1];  
+    gz = (float)gyroCount[2]*gRes ; //- gyroBias[2]; 
    }  
 
     if( (!MAX21100Bypass && (status & 0x10) && !(status & 0x20)) || (MAX21100Bypass && (readByte(LIS3MDL_ADDRESS, LIS3MDL_STATUS_REG) & 0x08))) {  // if all three axes have new magnetometer data
@@ -663,9 +663,9 @@ void loop()
   // in the LSM9DS0 sensor. This rotation can be modified to allow any convenient orientation convention.
   // This is ok by aircraft orientation standards!  
   // Pass gyro rate as rad/s
-//  MadgwickQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f,  -mx,  -my,  -mz);
+  MadgwickQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f,  -mx,  -my,  -mz);
 //  MahonyQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f, -mx, -my, -mz);
-    MAX21100Quaternion();  // The MAX21100 does 9 DoF sensor fusion in hardware!
+  //  MAX21100Quaternion();  // The MAX21100 does 9 DoF sensor fusion in hardware!
     
     // Serial print and/or display at 0.5 s rate independent of data rates
     delt_t = millis() - count;
@@ -697,9 +697,15 @@ void loop()
     Mtemperature = ((float) tempMCount) / 8. + 25.0; // Mag chip die temperature in degrees Centigrade
    // Print magnetometer die temperature in degrees Centigrade      
     Serial.print("Mag temperature is ");  Serial.print(Mtemperature, 1);  Serial.println(" degrees C"); // Print T values to tenths of a degree C
-    
+
+    // Temporarily enable MAX21100 bypass mode to read from pressure sensor
+    uint8_t temp = readByte(MAX21100_ADDRESS, MAX21100_DR_CFG); // store existing register contents
+    writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, temp | 0x80); // toggle on bypass mode
+    delay(20);
     D1 = MS5637Read(ADC_D1, OSR);  // get raw pressure value
     D2 = MS5637Read(ADC_D2, OSR);  // get raw temperature value
+    writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, temp & ~0x80); // toggle off bypass mode
+    
     dT = D2 - Pcal[5]*pow(2,8);    // calculate temperature difference from reference
     OFFSET = Pcal[2]*pow(2, 17) + dT*Pcal[4]/pow(2,6);
     SENS = Pcal[1]*pow(2,16) + dT*Pcal[3]/pow(2,7);
@@ -820,10 +826,8 @@ void loop()
     // produced by the on-board Digital Motion Processor of Invensense's MPU6050 6 DoF and MPU9150 9DoF sensors.
     // The 3.3 V 8 MHz Pro Mini is doing pretty well!
     
-    if(MAX21100Bypass) {
     display.setCursor(0, 40); display.print(altitude, 0); display.print("ft"); 
     display.setCursor(68, 0); display.print(9.*Temperature/5. + 32., 0); 
-    }
     display.setCursor(42, 40); display.print((float) sumCount / (1000.*sum), 2); display.print("kHz"); 
     display.display();
 
@@ -974,13 +978,13 @@ void selftestMAX21100(float * selfTest) {
    uint8_t rawData[6];
    
   // Enable power select to control power mode from DSYNC (enable = 0x80, disable = 0x00)
-  // choose power mode (accelnormal_gyronormal = 0xFF in bits 6:3
+  // choose power mode (accelnormal_gyronormal = 0x0F in bits 6:3
   // Enable all axes (z = bit 2, y = bit 1, x = bit 0)
-   writeByte(MAX21100_ADDRESS, MAX21100_POWER_CFG, powerSelect | powerMode << 3 | 0x07);
+   writeByte(MAX21100_ADDRESS, MAX21100_POWER_CFG, 0x0F << 3 | 0x07);
 
-// Configure gyro
+  // Configure gyro
   // Select gyro bandwidth (bits 5:2) and gyro full scale (bits 1:0)
-   uint16_t gyrosensitivity  = 131;   // = 131 LSB/degrees/sec per data sheet
+   float gyrosensitivity  = 131.0f;   // = 131 LSB/degrees/sec per data sheet
    writeByte(MAX21100_ADDRESS, MAX21100_GYRO_CFG1, 0x40 | GBW_14Hz << 2 | GFS_250DPS); // positive deflection
    delay(100);
    
@@ -997,19 +1001,19 @@ void selftestMAX21100(float * selfTest) {
    gyroSelfTestminus[1] = (int16_t) (((int16_t)rawData[2] << 8) | rawData[3]);  
    gyroSelfTestminus[2] = (int16_t) (((int16_t)rawData[4] << 8) | rawData[5]); 
   
-   selfTest[0] = (float) gyroSelfTestplus[0] / (float) gyrosensitivity;
-   selfTest[1] = (float) gyroSelfTestplus[1] / (float) gyrosensitivity;
-   selfTest[2] = (float) gyroSelfTestplus[2] / (float) gyrosensitivity;
-   selfTest[3] = (float) gyroSelfTestminus[0] / (float) gyrosensitivity;
-   selfTest[4] = (float) gyroSelfTestminus[1] / (float) gyrosensitivity;
-   selfTest[5] = (float) gyroSelfTestminus[2] / (float) gyrosensitivity;
+   selfTest[0] = (float) gyroSelfTestplus[0] / gyrosensitivity;
+   selfTest[1] = (float) gyroSelfTestplus[1] / gyrosensitivity;
+   selfTest[2] = (float) gyroSelfTestplus[2] / gyrosensitivity;
+   selfTest[3] = (float) gyroSelfTestminus[0] / gyrosensitivity;
+   selfTest[4] = (float) gyroSelfTestminus[1] / gyrosensitivity;
+   selfTest[5] = (float) gyroSelfTestminus[2] / gyrosensitivity;
 
 // disable gyro self test mode
    writeByte(MAX21100_ADDRESS, MAX21100_GYRO_CFG1, 0x00 | GBW_14Hz << 2 | GFS_250DPS);  
  
 // Configure the accelerometer
 // Select accel full scale (bits 7:6) and enable all three axes (bits 2:0)
-   uint16_t accelsensitivity = 16384;  // = 16384 LSB/g per data sheet
+   float accelsensitivity = 16384.0f;  // = 16384 LSB/g per data sheet
 
 //  positive x-axis deflection
    writeByte(MAX21100_ADDRESS, MAX21100_PWR_ACC_CFG, AFS_2G << 6 | 0x08 | 0x07); // pos x axis
@@ -1047,14 +1051,14 @@ void selftestMAX21100(float * selfTest) {
    readBytes(MAX21100_ADDRESS, MAX21100_ACC_Z_H, 2, &rawData[0]);    // Read the raw data registers into data array
    accelSelfTestminus[2] = (int16_t) (((int16_t)rawData[0] << 8) | rawData[1]);  // Turn the MSB and LSB into a signed 16-bit value
 
-   selfTest[6] = (float) accelSelfTestplus[0] / (float) accelsensitivity;
-   selfTest[7] = (float) accelSelfTestplus[1] / (float) accelsensitivity;
-   selfTest[8] = (float) accelSelfTestplus[2] / (float) accelsensitivity;
-   selfTest[9] = (float) accelSelfTestminus[0] / (float) accelsensitivity;
-   selfTest[10] = (float) accelSelfTestminus[1] / (float) accelsensitivity;
-   selfTest[11] = (float) accelSelfTestminus[2] / (float) accelsensitivity;
+   selfTest[6] = (float) accelSelfTestplus[0] / accelsensitivity;
+   selfTest[7] = (float) accelSelfTestplus[1] / accelsensitivity;
+   selfTest[8] = (float) accelSelfTestplus[2] / accelsensitivity;
+   selfTest[9] = (float) accelSelfTestminus[0] / accelsensitivity;
+   selfTest[10] = (float) accelSelfTestminus[1] / accelsensitivity;
+   selfTest[11] = (float) accelSelfTestminus[2] / accelsensitivity;
   
-   // disable accel  self test
+   // disable accel self test
    writeByte(MAX21100_ADDRESS, MAX21100_PWR_ACC_CFG, AFS_2G << 6 | 0x00 | 0x07); // end accel self test
 }
 
@@ -1157,13 +1161,63 @@ void calibrateMAX21100(float * dest1, float * dest2) {
   dest2[2] = (float) accel_bias[2]/(float) accelsensitivity;
   
    writeByte(MAX21100_ADDRESS, MAX21100_FIFO_CFG, 0x00); // Turn off FIFO
+      
+   // Switch to bank 2 to write gyro bias into gyro bias registers
+   // Per MAXIM Integrated, these registers hold gyro bias data at a resolution 
+   // of 1 LSB/8.33 mdps, or more properly
+   // 131 LSB/dps as expected from the 16-bit data and the 250 dps full range.
+   // Gyro bias is 13-bits, 2-s complement and issub tracted from data result
+   //
+   writeByte(MAX21100_ADDRESS, MAX21100_BANK_SELECT, 0x02);  // select bank 2
+
+   gyro_bias[0] *= -1;
+   gyro_bias[1] *= -1;
+   gyro_bias[2] *= -1;
+   
+   int16_t xGyroBias = (int16_t) gyro_bias[0];
+   int16_t yGyroBias = (int16_t) gyro_bias[1];
+   int16_t zGyroBias = (int16_t) gyro_bias[2];
+   
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_GYRO_X_H, ((xGyroBias >> 8) & 0x1F));  // load bias into gyro bias registers
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_GYRO_X_L, (xGyroBias  & 0xFF));
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_GYRO_Y_H, ((yGyroBias >> 8) & 0x1F));  // load bias into gyro bias registers
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_GYRO_Y_L, (yGyroBias  & 0xFF));
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_GYRO_Z_H, ((zGyroBias >> 8) & 0x1F));  // load bias into gyro bias registers
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_GYRO_Z_L, (zGyroBias  & 0xFF));
+   
+   // Write accelerometer bias to accel bias registers also. In this case, there are 7-bits
+   // 2-s complement to hold the accel bias and Maxim claims the sensitivity of the accel bias
+   // is 1 LSB/ 6.4 mg or 32768/(2 g x 100) by my reckoning or 1/100th of what one would expect
+   // therefore the accel bias must be divided first by 100 and then cast into the correct register
+   // positions
+   //
+   accel_bias[0] *= -1/100;
+   accel_bias[1] *= -1/100;
+   accel_bias[2] *= -1/100;
+   
+   int16_t xAccelBias = (int16_t) accel_bias[0];
+   int16_t yAccelBias = (int16_t) accel_bias[1];
+   int16_t zAccelBias = (int16_t) accel_bias[2];
+   
+
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_X, (xAccelBias & 0x7F));  // load x bias into accel bias registers
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Y, (yAccelBias & 0x7F));  // load y bias into accel bias registers
+   writeByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Z, (zAccelBias & 0x7F));  // load z bias into accel bias registers
+
+   Serial.print("x-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_X));
+   Serial.print("y-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Y));
+   Serial.print("z-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Z));
+ 
+ //  This doesn't seem to be working at all...
+   
+   writeByte(MAX21100_ADDRESS, MAX21100_BANK_SELECT, 0x00);  // select bank 0
 }
 
 
 // Initialize the MAX21100 for bypass mode operations (read from magnetometer directly via microcontroller
 void initbypassMAX21100() {
   // Enable power select to control power mode from DSYNC (enable = 0x80, disable = 0x00)
-  // choose power mode (accelnormal_gyronormal = 0xFF in bits 6:3
+  // choose power mode (accelnormal_gyronormal = 0xF in bits 6:3
   // Enable all axes (z = bit 2, y = bit 1, x = bit 0)
    writeByte(MAX21100_ADDRESS, MAX21100_POWER_CFG, powerSelect | powerMode << 3 | 0x07);
 
@@ -1212,7 +1266,8 @@ void initmasterMAX21100() {
    writeByte(MAX21100_ADDRESS, MAX21100_MAG_SLV_CFG, 0x80 | 0x40 | 0x06);      
    writeByte(MAX21100_ADDRESS, MAX21100_MAG_SLV_ADD, LIS3MDL_ADDRESS);  // magnetometer slave address
    writeByte(MAX21100_ADDRESS, MAX21100_MAG_SLV_REG, LIS3MDL_OUT_X_L);  // magnetometer slave first data register
-   
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_MAP_REG, 0x00);             // magnetometer has inverted x,y axes wrt the MAX21100
+      
   // Data ready configuration
   // Enable master mode to read magnetometer from MAX21100 (bit 7 = 0, default)
   // Clear data ready bits when status register is read (bits 3:2 = 10)
@@ -1220,15 +1275,16 @@ void initmasterMAX21100() {
   writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, 0x08 | 0x01);
  }
 
-
-void MAX21100Quaternion() {
+ 
+  void MAX21100Quaternion() {
 
   uint8_t data[8] = {0, 0, 0, 0, 0, 0, 0, 0};  
   int16_t quat[4] = {0, 0, 0, 0};
-  uint16_t norm;
+  float norm;
   
   writeByte(MAX21100_ADDRESS, MAX21100_BANK_SELECT, 0x02);  // select bank 2
   writeByte(MAX21100_ADDRESS, MAX21100_FUS_CFG0, 0x02 | 0x01);  // accel + mag only, enable fusion engine
+
   readBytes(MAX21100_ADDRESS, MAX21100_QUAT0_H, 8, &data[0]);
   quat[0] = (int16_t) (((int16_t) data[0] << 8) | data[1]);
   quat[1] = (int16_t) (((int16_t) data[2] << 8) | data[3]);
@@ -1236,11 +1292,12 @@ void MAX21100Quaternion() {
   quat[3] = (int16_t) (((int16_t) data[6] << 8) | data[7]);
   
   norm = sqrt(quat[0]*quat[0] + quat[1]*quat[1] + quat[2]*quat[2] + quat[3]*quat[3]);
+  norm = 1.0f/norm;
   
-  q[0] = (float) quat[0] / (float) norm;
-  q[1] = (float) quat[1] / (float) norm;
-  q[2] = (float) quat[2] / (float) norm;
-  q[3] = (float) quat[3] / (float) norm;
+  q[0] = (float) quat[0] * norm;
+  q[1] = (float) quat[1] * norm;
+  q[2] = (float) quat[2] * norm;
+  q[3] = (float) quat[3] * norm;
   
   writeByte(MAX21100_ADDRESS, MAX21100_BANK_SELECT, 0x00);  // select bank 0
 }
@@ -1362,4 +1419,3 @@ unsigned char MS5637checkCRC(uint16_t * n_prom)  // calculate checksum from PROM
 	while (Wire.available()) {
         dest[i++] = Wire.read(); }         // Put read results in the Rx buffer
 }
-
