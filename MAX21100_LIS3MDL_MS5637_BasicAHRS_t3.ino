@@ -378,8 +378,7 @@ double dT, OFFSET, SENS, T2, OFFSET2, SENS2;  // First order and second order co
 int16_t accelCount[3];  // Stores the 16-bit signed accelerometer sensor output
 int16_t gyroCount[3];   // Stores the 16-bit signed gyro sensor output
 int16_t magCount[3];    // Stores the 16-bit signed magnetometer sensor output
-float magCalibration[3] = {0, 0, 0}, magbias[3] = {0, 0, 0};  // Factory mag calibration and mag bias
-float gyroBias[3] = {0, 0, 0}, accelBias[3] = {0, 0, 0};      // Bias corrections for gyro and accelerometer
+float gyroBias[3] = {0, 0, 0}, accelBias[3] = {0, 0, 0}, magBias[3] = {0, 0, 0};  // Bias corrections for gyro, accelerometer, mag
 int16_t tempGCount, tempMCount;      // temperature raw count output of mag and gyro
 float   Gtemperature, Mtemperature; // Stores the MAX21100 gyro and LIS3MDL mag internal chip temperatures in degrees Celsius
 double Temperature, Pressure;       // stores MS5637 pressures sensor pressure and temperature
@@ -446,7 +445,7 @@ void setup()
   display.setTextColor(BLACK); // Set pixel color; 1 on the monochrome screen
   display.clearDisplay();   // clears the screen and buffer
 
-/*
+
 // scan for i2c devices
   byte error, address;
   int nDevices;
@@ -484,7 +483,7 @@ void setup()
     Serial.println("No I2C devices found\n");
   else
     Serial.println("done\n");
- */ 
+ 
   
   // Read the WHO_AM_I register, this is a good test of communication
   Serial.println("MAX21100 6-axis motion sensor...");
@@ -508,20 +507,20 @@ void setup()
     
     selftestMAX21100(SelfTest); // Start by performing self test and reporting values
     Serial.print("x-axis self test +: gyration : "); Serial.print(SelfTest[0], 2); Serial.println(" should be +55");
-    Serial.print("y-axis self test +: gyration : "); Serial.print(SelfTest[1], 2); Serial.println(" should be +55");
+    Serial.print("y-axis self test -: gyration : "); Serial.print(SelfTest[1], 2); Serial.println(" should be -55");
     Serial.print("z-axis self test +: gyration : "); Serial.print(SelfTest[2], 2); Serial.println(" should be +55");
     Serial.print("x-axis self test -: gyration : "); Serial.print(SelfTest[3], 2); Serial.println(" should be -55");
-    Serial.print("y-axis self test -: gyration : "); Serial.print(SelfTest[4], 2); Serial.println(" should be -55");
+    Serial.print("y-axis self test +: gyration : "); Serial.print(SelfTest[4], 2); Serial.println(" should be +55");
     Serial.print("z-axis self test -: gyration : "); Serial.print(SelfTest[5], 2); Serial.println(" should be -55");
     Serial.print("x-axis self test +: acceleration : "); Serial.print(1000.*SelfTest[6]); Serial.println(" should be +300 mg");
-    Serial.print("y-axis self test +: acceleration : "); Serial.print(1000.*SelfTest[7]); Serial.println(" should be +300 mg");
+    Serial.print("y-axis self test -: acceleration : "); Serial.print(1000.*SelfTest[7]); Serial.println(" should be -300 mg");
     Serial.print("z-axis self test +: acceleration : "); Serial.print(1000.*SelfTest[8]); Serial.println(" should be +300 mg");
     Serial.print("x-axis self test -: acceleration : "); Serial.print(1000.*SelfTest[9]); Serial.println(" should be -300 mg");
-    Serial.print("y-axis self test -: acceleration : "); Serial.print(1000.*SelfTest[10]); Serial.println(" should be -300 mg");
+    Serial.print("y-axis self test +: acceleration : "); Serial.print(1000.*SelfTest[10]); Serial.println(" should be +300 mg");
     Serial.print("z-axis self test -: acceleration : "); Serial.print(1000.*SelfTest[11]); Serial.println(" should be -300 mg");
     delay(1000);
     
-  calibrateMAX21100(gyroBias, accelBias); // Calibrate gyro and accelerometers, load biases in bias registers
+  accelgyrocalMAX21100(gyroBias, accelBias); // Calibrate gyro and accelerometers, load biases in bias registers
   Serial.println(1000*accelBias[0]);  Serial.println(1000*accelBias[1]);  Serial.print(1000*accelBias[2]); Serial.println(" mg");
   Serial.println(gyroBias[0]);  Serial.println(gyroBias[1]);  Serial.print(gyroBias[2]); Serial.println(" dps");
 
@@ -596,21 +595,9 @@ void setup()
    getAres();
    getGres();
    getMres();
-   magbias[0] = -237.;// User environmental x-axis correction in milliGauss, should be automatically calculated
-   magbias[1] = +220.;// User environmental y-axis correction in milliGauss
-   magbias[2] = -430.;// User environmental z-axis correction in milliGauss
- 
-   int16_t MBiasX = (int16_t) magbias[0]/mRes;  // convert estimated mag bias to 16-bit two's complement integer
-   int16_t MBiasY = (int16_t) magbias[1]/mRes;
-   int16_t MBiasZ = (int16_t) magbias[2]/mRes;
-   
-   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_X_MSB, ((MBiasX >> 8) & 0xFF));  // load bias into mag bias registers
-   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_X_LSB, (MBiasX  & 0xFF));
-   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Y_MSB, ((MBiasY >> 8) & 0xFF));
-   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Y_LSB, (MBiasY  & 0xFF));
-   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Z_MSB, ((MBiasZ >> 8) & 0xFF));
-   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Z_LSB, (MBiasZ  & 0xFF));
-   
+
+   magcalMAX21100(magBias);  // calibrate the LIS3MDL magnetometer
+   Serial.println(magBias[0]);  Serial.println(magBias[1]);  Serial.print(magBias[2]); Serial.println(" mG");
   }
   else
   {
@@ -644,9 +631,9 @@ void loop()
     if( (!MAX21100Bypass && (status & 0x10) && !(status & 0x20)) || (MAX21100Bypass && (readByte(LIS3MDL_ADDRESS, LIS3MDL_STATUS_REG) & 0x08))) {  // if all three axes have new magnetometer data
     readMagData(magCount);  // Read the x/y/z adc values   
     // Calculate the magnetometer values in milliGauss
-    mx = (float)magCount[0]*mRes; // - magbias[0];  // get actual magnetometer value, this depends on scale being set
-    my = (float)magCount[1]*mRes; // - magbias[1];  
-    mz = (float)magCount[2]*mRes; // - magbias[2];   
+    mx = (float)magCount[0]*mRes;//  - magBias[0];  // get actual magnetometer value, this depends on scale being set
+    my = (float)magCount[1]*mRes;//  - magBias[1];  
+    mz = (float)magCount[2]*mRes;//  - magBias[2];   
   }
   
   Now = micros();
@@ -664,8 +651,8 @@ void loop()
   // This is ok by aircraft orientation standards!  
   // Pass gyro rate as rad/s
   MadgwickQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f,  -mx,  -my,  -mz);
-//  MahonyQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f, -mx, -my, -mz);
-  //  MAX21100Quaternion();  // The MAX21100 does 9 DoF sensor fusion in hardware!
+//   MahonyQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f, -mx, -my, -mz);
+//    MAX21100Quaternion();  // The MAX21100 does 9 DoF sensor fusion in hardware!
     
     // Serial print and/or display at 0.5 s rate independent of data rates
     delt_t = millis() - count;
@@ -701,7 +688,7 @@ void loop()
     // Temporarily enable MAX21100 bypass mode to read from pressure sensor
     uint8_t temp = readByte(MAX21100_ADDRESS, MAX21100_DR_CFG); // store existing register contents
     writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, temp | 0x80); // toggle on bypass mode
-    delay(20);
+    delay(25);
     D1 = MS5637Read(ADC_D1, OSR);  // get raw pressure value
     D2 = MS5637Read(ADC_D2, OSR);  // get raw temperature value
     writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, temp & ~0x80); // toggle off bypass mode
@@ -722,17 +709,17 @@ void loop()
     if(Temperature < 20)                   // correction for low temperature
     {
       T2      = 3*dT*dT/pow(2, 33); 
-      OFFSET2 = 61*(Temperature - 2000)*(Temperature - 2000)/16;
-      SENS2   = 29*(Temperature - 2000)*(Temperature - 2000)/16;
+      OFFSET2 = 61*(100*Temperature - 2000)*(100*Temperature - 2000)/16;
+      SENS2   = 29*(100*Temperature - 2000)*(100*Temperature - 2000)/16;
     } 
     if(Temperature < -15)                      // correction for very low temperature
     {
-      OFFSET2 = OFFSET2 + 17*(Temperature + 1500)*(Temperature + 1500);
-      SENS2 = SENS2 + 9*(Temperature + 1500)*(Temperature + 1500);
+      OFFSET2 = OFFSET2 + 17*(100*Temperature + 1500)*(100*Temperature + 1500);
+      SENS2 = SENS2 + 9*(100*Temperature + 1500)*(100*Temperature + 1500);
     }
  // End of second order corrections
  //
-     Temperature = Temperature - T2;
+     Temperature = Temperature - T2/100;
      OFFSET = OFFSET - OFFSET2;
      SENS = SENS - SENS2;
  
@@ -1064,7 +1051,7 @@ void selftestMAX21100(float * selfTest) {
 
 
 // Calibrate the MAX21100 gyro and accelerometer
-void calibrateMAX21100(float * dest1, float * dest2) {
+void accelgyrocalMAX21100(float * dest1, float * dest2) {
 
   uint8_t data[12]; // data array to hold accelerometer and gyro x, y, z, data
   uint16_t ii = 0, fifo_count = 0, sample_count = 0;
@@ -1204,15 +1191,77 @@ void calibrateMAX21100(float * dest1, float * dest2) {
    writeByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Y, (yAccelBias & 0x7F));  // load y bias into accel bias registers
    writeByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Z, (zAccelBias & 0x7F));  // load z bias into accel bias registers
 
-   Serial.print("x-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_X));
-   Serial.print("y-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Y));
-   Serial.print("z-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Z));
+ //  Serial.print("x-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_X));
+ //  Serial.print("y-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Y));
+ //  Serial.print("z-accel_bias = "); Serial.println(readByte(MAX21100_ADDRESS, MAX21100_BIAS_COMP_ACC_Z));
  
  //  This doesn't seem to be working at all...
    
    writeByte(MAX21100_ADDRESS, MAX21100_BANK_SELECT, 0x00);  // select bank 0
 }
 
+
+void magcalMAX21100(float * dest1) 
+{
+  uint8_t data[2]; // data array to hold mag x, y, z, data
+  uint16_t ii = 0, sample_count = 0;
+  int32_t mag_bias[3] = {0, 0, 0};
+  int16_t mag_max[3] = {0, 0, 0}, mag_min[3] = {0, 0, 0};
+ 
+   uint8_t temp = readByte(MAX21100_ADDRESS, MAX21100_DR_CFG); // store existing register contents
+   writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, temp | 0x80); // toggle on bypass mode for LIS3MDL calibration
+ 
+   Serial.println("Mag Calibration: Wave device in a figure eight until done!");
+   delay(4000);
+  
+   sample_count = 128;
+   for(ii = 0; ii < sample_count; ii++) {
+    int16_t mag_temp[3] = {0, 0, 0};
+   readBytes(LIS3MDL_ADDRESS, LIS3MDL_OUT_X_L, 2, &data[0]);  // Read the two raw data registers sequentially into data array
+    mag_temp[0] = ((int16_t)data[1] << 8) | data[0] ;  // Turn the MSB and LSB into a signed 16-bit value
+   readBytes(LIS3MDL_ADDRESS, LIS3MDL_OUT_Y_L, 2, &data[0]);  // Read the two raw data registers sequentially into data array
+    mag_temp[1] = ((int16_t)data[1] << 8) | data[0] ;  // Turn the MSB and LSB into a signed 16-bit value
+   readBytes(LIS3MDL_ADDRESS, LIS3MDL_OUT_Z_L, 2, &data[0]);  // Read the two raw data registers sequentially into data array
+    mag_temp[2] = ((int16_t)data[1] << 8) | data[0] ;  // Turn the MSB and LSB into a signed 16-bit value
+    for (int jj = 0; jj < 3; jj++) {
+      if(mag_temp[jj] > mag_max[jj]) mag_max[jj] = mag_temp[jj];
+      if(mag_temp[jj] < mag_min[jj]) mag_min[jj] = mag_temp[jj];
+    }
+    delay(105);  // at 10 Hz ODR, new mag data is available every 100 ms
+   }
+
+    Serial.println("mag x min/max:"); Serial.println(mag_max[0]); Serial.println(mag_min[0]);
+    Serial.println("mag y min/max:"); Serial.println(mag_max[1]); Serial.println(mag_min[1]);
+    Serial.println("mag z min/max:"); Serial.println(mag_max[2]); Serial.println(mag_min[2]);
+
+    mag_bias[0]  = (mag_max[0] + mag_min[0])/2;  // get average x mag bias in counts
+    mag_bias[1]  = (mag_max[1] + mag_min[1])/2;  // get average y mag bias in counts
+    mag_bias[2]  = (mag_max[2] + mag_min[2])/2;  // get average z mag bias in counts
+ 
+    mag_bias[0] *= -1;
+    mag_bias[1] *= -1;
+    mag_bias[2] *= -1;
+      
+    dest1[0] = (float) mag_bias[0]*mRes;  // save mag biases in mG for main program
+    dest1[1] = (float) mag_bias[1]*mRes;   
+    dest1[2] = (float) mag_bias[2]*mRes;          
+
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_X_MSB, ((mag_bias[0] >> 8) & 0xFF));  // load bias into mag bias registers
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_X_LSB, (mag_bias[0]  & 0xFF));
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Y_MSB, ((mag_bias[1] >> 8) & 0xFF));
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Y_LSB, (mag_bias[1]  & 0xFF));
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Z_MSB, ((mag_bias[2] >> 8) & 0xFF));
+   writeByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Z_LSB, (mag_bias[2]  & 0xFF));
+
+     Serial.print("x-mag_bias = "); Serial.println((int16_t)(readByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_X_MSB) << 8) | readByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_X_LSB));
+     Serial.print("y-mag_bias = "); Serial.println((int16_t)(readByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Y_MSB) << 8) | readByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Y_LSB));
+     Serial.print("z-mag_bias = "); Serial.println((int16_t)(readByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Z_MSB) << 8) | readByte(MAX21100_ADDRESS, MAX21100_MAG_OFS_Z_LSB));
+
+  writeByte(MAX21100_ADDRESS, MAX21100_DR_CFG, temp & ~0x80); // toggle off bypass mode
+
+ 
+   Serial.println("Mag Calibration done!");
+}
 
 // Initialize the MAX21100 for bypass mode operations (read from magnetometer directly via microcontroller
 void initbypassMAX21100() {
@@ -1283,7 +1332,7 @@ void initmasterMAX21100() {
   float norm;
   
   writeByte(MAX21100_ADDRESS, MAX21100_BANK_SELECT, 0x02);  // select bank 2
-  writeByte(MAX21100_ADDRESS, MAX21100_FUS_CFG0, 0x02 | 0x01);  // accel + mag only, enable fusion engine
+  writeByte(MAX21100_ADDRESS, MAX21100_FUS_CFG0, 0x01);     // enable fusion engine
 
   readBytes(MAX21100_ADDRESS, MAX21100_QUAT0_H, 8, &data[0]);
   quat[0] = (int16_t) (((int16_t) data[0] << 8) | data[1]);
@@ -1419,3 +1468,4 @@ unsigned char MS5637checkCRC(uint16_t * n_prom)  // calculate checksum from PROM
 	while (Wire.available()) {
         dest[i++] = Wire.read(); }         // Put read results in the Rx buffer
 }
+
