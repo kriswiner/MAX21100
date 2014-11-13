@@ -1,6 +1,6 @@
 MAX21100
 ========
-![}(https://cloud.githubusercontent.com/assets/6698410/5024380/8db4af4a-6abe-11e4-8c88-a910f12e314b.jpg)
+![](https://cloud.githubusercontent.com/assets/6698410/5024380/8db4af4a-6abe-11e4-8c88-a910f12e314b.jpg)
 
 MAX21100 6 DoF motion sensor with hardware 9 DoF sensor fusion
 
